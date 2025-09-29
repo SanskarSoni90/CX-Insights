@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import openai
+import sys
+import traceback
 
 # --- Configuration ---
 # Load secrets from environment variables
@@ -16,13 +18,47 @@ ASSEMBLYAI_API_KEY = os.getenv('ASSEMBLYAI_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 GOOGLE_SHEET_ID = '1LGeqJTaX6IfjHz2-H1YGzuRV3FM22P33Uqx2nwp5Zjs'
 GOOGLE_SHEET_NAME = 'Sheet1'
-# The GOOGLE_CREDENTIALS_JSON is a multi-line secret, it needs to be loaded carefully
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
 
 # File to store processed call SIDs
 PROCESSED_CALLS_FILE = 'processed_calls.txt'
 
 # --- Helper Functions ---
+
+def log(message):
+    """Enhanced logging with timestamp and flush."""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f"[{timestamp}] {message}", flush=True)
+    sys.stdout.flush()
+
+def check_environment_variables():
+    """Verify all required environment variables are set."""
+    log("Checking environment variables...")
+    required_vars = {
+        'EXOTEL_ACCOUNT_SID': EXOTEL_ACCOUNT_SID,
+        'EXOTEL_API_KEY': EXOTEL_API_KEY,
+        'EXOTEL_API_TOKEN': EXOTEL_API_TOKEN,
+        'ASSEMBLYAI_API_KEY': ASSEMBLYAI_API_KEY,
+        'OPENAI_API_KEY': OPENAI_API_KEY,
+        'GOOGLE_CREDENTIALS_JSON': GOOGLE_CREDENTIALS_JSON
+    }
+    
+    missing_vars = []
+    for var_name, var_value in required_vars.items():
+        if not var_value:
+            missing_vars.append(var_name)
+            log(f"❌ {var_name} is NOT set")
+        else:
+            # Show partial value for debugging (first 10 chars)
+            display_value = var_value[:10] + "..." if len(var_value) > 10 else var_value
+            log(f"✅ {var_name} is set: {display_value}")
+    
+    if missing_vars:
+        log(f"🚫 CRITICAL: Missing required environment variables: {', '.join(missing_vars)}")
+        return False
+    
+    log("✅ All environment variables are set")
+    return True
 
 def get_processed_calls():
     """Reads the set of already processed call SIDs from a file."""
@@ -38,19 +74,22 @@ def add_processed_call(sid):
 
 def fetch_recent_exotel_calls():
     """Fetches calls from Exotel from the last 15 minutes."""
-    print("Fetching recent calls from Exotel...")
+    log("=" * 50)
+    log("Fetching recent calls from Exotel...")
+    
     try:
         # Calculate time range
         start_time = datetime.now(timezone.utc) - timedelta(minutes=15)
         start_time_str = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+        log(f"Fetching calls from: {start_time_str}")
 
         # List of possible Exotel API endpoints to try
         endpoints_to_try = [
-            f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json",
-            f"https://api.in.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json", 
-            f"https://twilix.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json",
-            f"https://{EXOTEL_ACCOUNT_SID}.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json",
-            f"https://api.sg.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"
+            ("Singapore Cluster", f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"),
+            ("Mumbai Cluster", f"https://api.in.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"),
+            ("Twilix Endpoint", f"https://twilix.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"),
+            ("Account Subdomain", f"https://{EXOTEL_ACCOUNT_SID}.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"),
+            ("SG Regional", f"https://api.sg.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json")
         ]
         
         params = {
@@ -58,90 +97,72 @@ def fetch_recent_exotel_calls():
             'PageSize': 20
         }
         
-        last_error = None
+        log(f"Request params: {params}")
         
-        for url in endpoints_to_try:
+        for endpoint_name, url in endpoints_to_try:
             try:
-                print(f"Trying endpoint: {url}")
-                response = requests.get(url, auth=(EXOTEL_API_KEY, EXOTEL_API_TOKEN), params=params, timeout=30)
+                log(f"Trying {endpoint_name}: {url}")
+                response = requests.get(
+                    url, 
+                    auth=(EXOTEL_API_KEY, EXOTEL_API_TOKEN), 
+                    params=params, 
+                    timeout=30
+                )
+                
+                log(f"Response status: {response.status_code}")
                 
                 if response.status_code == 200:
-                    print(f"✅ SUCCESS! Working endpoint: {url}")
+                    log(f"✅ SUCCESS! Working endpoint: {endpoint_name}")
                     data = response.json()
-                    print(f"Found {len(data.get('Calls', []))} calls in the last 15 minutes.")
+                    calls = data.get('Calls', [])
+                    log(f"Found {len(calls)} calls in the last 15 minutes")
                     
-                    # Save the working endpoint for future reference
-                    print(f"🔥 IMPORTANT: Use this URL in your code: {url}")
-                    return data.get('Calls', [])
+                    if calls:
+                        log("First call details:")
+                        first_call = calls[0]
+                        log(f"  - Call SID: {first_call.get('Sid')}")
+                        log(f"  - Status: {first_call.get('Status')}")
+                        log(f"  - Direction: {first_call.get('Direction')}")
+                        log(f"  - Date Created: {first_call.get('DateCreated')}")
+                        log(f"  - Has Recording: {bool(first_call.get('RecordingUrl'))}")
+                    
+                    return calls
                     
                 elif response.status_code == 401:
-                    print(f"❌ Authentication failed for {url} - check your API credentials")
-                    print(f"Response: {response.text}")
+                    log(f"❌ Authentication failed for {endpoint_name}")
+                    log(f"Response: {response.text[:200]}")
                 elif response.status_code == 404:
-                    print(f"❌ Account not found on {url} - wrong endpoint for your account")
+                    log(f"❌ Account not found on {endpoint_name}")
                 else:
-                    print(f"❌ {url} returned status {response.status_code}: {response.text}")
+                    log(f"❌ {endpoint_name} returned status {response.status_code}")
+                    log(f"Response: {response.text[:200]}")
                     
             except requests.exceptions.ConnectionError as e:
-                print(f"❌ Connection failed for {url}: {str(e)}")
-                last_error = e
+                log(f"❌ Connection failed for {endpoint_name}: {str(e)[:100]}")
+            except requests.exceptions.Timeout as e:
+                log(f"❌ Timeout for {endpoint_name}: {str(e)[:100]}")
             except Exception as e:
-                print(f"❌ Error with {url}: {str(e)}")
-                last_error = e
+                log(f"❌ Error with {endpoint_name}: {str(e)[:100]}")
         
         # If we get here, no endpoint worked
-        print("🚫 No working Exotel endpoint found!")
-        print("Please check:")
-        print("1. Your EXOTEL_ACCOUNT_SID is correct")
-        print("2. Your EXOTEL_API_KEY is correct") 
-        print("3. Your EXOTEL_API_TOKEN is correct")
-        print("4. Your Exotel account is active and has API access")
+        log("🚫 No working Exotel endpoint found!")
+        log("Please verify:")
+        log("1. Your EXOTEL_ACCOUNT_SID is correct")
+        log("2. Your EXOTEL_API_KEY is correct") 
+        log("3. Your EXOTEL_API_TOKEN is correct")
+        log("4. Your Exotel account is active and has API access enabled")
+        log("5. Your account has made calls in the last 15 minutes")
         
-        if last_error:
-            raise last_error
         return []
         
     except Exception as e:
-        print(f"Final error fetching calls from Exotel: {e}")
+        log(f"EXCEPTION in fetch_recent_exotel_calls: {str(e)}")
+        log(f"Full traceback: {traceback.format_exc()}")
         return []
-
-
-def test_exotel_connection():
-    """Test function to verify Exotel API connectivity and credentials."""
-    print("=== Testing Exotel API Connection ===")
-    print(f"Account SID: {EXOTEL_ACCOUNT_SID}")
-    print(f"API Key: {EXOTEL_API_KEY[:10]}...") # Only show first 10 chars for security
-    print(f"API Token: {'*' * len(EXOTEL_API_TOKEN)}")
-    
-    # Try to get account details first
-    endpoints_to_try = [
-        f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}.json",
-        f"https://api.in.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}.json",
-        f"https://twilix.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}.json"
-    ]
-    
-    for url in endpoints_to_try:
-        try:
-            print(f"Testing account endpoint: {url}")
-            response = requests.get(url, auth=(EXOTEL_API_KEY, EXOTEL_API_TOKEN), timeout=10)
-            
-            if response.status_code == 200:
-                print(f"✅ Account endpoint working: {url}")
-                account_info = response.json()
-                print(f"Account Name: {account_info.get('account', {}).get('name', 'N/A')}")
-                print(f"Account Status: {account_info.get('account', {}).get('status', 'N/A')}")
-                return True
-            else:
-                print(f"❌ Status {response.status_code}: {response.text[:200]}")
-                
-        except Exception as e:
-            print(f"❌ Error: {e}")
-    
-    return False
 
 def transcribe_audio(audio_url):
     """Submits audio for transcription to AssemblyAI and waits for the result."""
-    print(f"Transcribing audio from: {audio_url}")
+    log(f"Transcribing audio from: {audio_url}")
     try:
         headers = {'authorization': ASSEMBLYAI_API_KEY}
         json_data = {'audio_url': audio_url}
@@ -150,7 +171,7 @@ def transcribe_audio(audio_url):
         upload_response = requests.post('https://api.assemblyai.com/v2/transcript', json=json_data, headers=headers)
         upload_response.raise_for_status()
         transcript_id = upload_response.json()['id']
-        print(f"Transcription submitted. ID: {transcript_id}")
+        log(f"Transcription submitted. ID: {transcript_id}")
 
         # Poll for completion
         while True:
@@ -159,44 +180,44 @@ def transcribe_audio(audio_url):
             poll_response.raise_for_status()
             transcript_data = poll_response.json()
             if transcript_data['status'] == 'completed':
-                print("Transcription complete.")
+                log("Transcription complete.")
                 return transcript_data['text']
             elif transcript_data['status'] == 'failed':
-                print(f"Transcription failed: {transcript_data.get('error')}")
+                log(f"Transcription failed: {transcript_data.get('error')}")
                 return None
-            print("Transcription in progress, waiting...")
+            log("Transcription in progress, waiting...")
             time.sleep(5)
-    except requests.exceptions.RequestException as e:
-        print(f"Error during transcription: {e}")
+    except Exception as e:
+        log(f"Error during transcription: {e}")
+        log(f"Full traceback: {traceback.format_exc()}")
         return None
 
 def analyze_transcript_with_openai(transcript):
     """Analyzes the transcript using OpenAI to extract insights."""
-    print("Analyzing transcript with OpenAI...")
+    log("Analyzing transcript with OpenAI...")
     if not transcript:
         return {}
     
-    # Initialize the OpenAI client
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
-    
-    system_prompt = """
-    You are an expert call center analyst. Analyze the following call transcript and extract the specified information.
-    Respond ONLY with a valid JSON object. Do not include any explanatory text before or after the JSON.
-    The JSON object should have the following keys:
-    "primary_issue", "issue_category", "sentiment", "urgency", "resolution_status", 
-    "customer_satisfaction", "key_topics", "action_items", "agent_performance", 
-    "summary", "transcript_snippet"
-    
-    - sentiment: "Positive", "Negative", or "Neutral".
-    - urgency: "High", "Medium", or "Low".
-    - resolution_status: "Resolved", "Unresolved", or "Needs Follow-up".
-    - customer_satisfaction: A rating from 1 to 5.
-    - key_topics: A comma-separated string of main topics.
-    - action_items: A comma-separated string of action items.
-    - transcript_snippet: A relevant 1-2 sentence snippet from the transcript.
-    """
-    
     try:
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        
+        system_prompt = """
+        You are an expert call center analyst. Analyze the following call transcript and extract the specified information.
+        Respond ONLY with a valid JSON object. Do not include any explanatory text before or after the JSON.
+        The JSON object should have the following keys:
+        "primary_issue", "issue_category", "sentiment", "urgency", "resolution_status", 
+        "customer_satisfaction", "key_topics", "action_items", "agent_performance", 
+        "summary", "transcript_snippet"
+        
+        - sentiment: "Positive", "Negative", or "Neutral".
+        - urgency: "High", "Medium", or "Low".
+        - resolution_status: "Resolved", "Unresolved", or "Needs Follow-up".
+        - customer_satisfaction: A rating from 1 to 5.
+        - key_topics: A comma-separated string of main topics.
+        - action_items: A comma-separated string of action items.
+        - transcript_snippet: A relevant 1-2 sentence snippet from the transcript.
+        """
+        
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
@@ -206,17 +227,17 @@ def analyze_transcript_with_openai(transcript):
             response_format={"type": "json_object"}
         )
         analysis = json.loads(response.choices[0].message.content)
-        print("Analysis complete.")
+        log("Analysis complete.")
         return analysis
     except Exception as e:
-        print(f"Error analyzing transcript with OpenAI: {e}")
+        log(f"Error analyzing transcript with OpenAI: {e}")
+        log(f"Full traceback: {traceback.format_exc()}")
         return {}
 
 def update_google_sheet(data_row):
     """Appends a new row of data to the Google Sheet."""
-    print("Updating Google Sheet...")
+    log("Updating Google Sheet...")
     try:
-        # Load credentials from the environment variable
         creds_json = json.loads(GOOGLE_CREDENTIALS_JSON)
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
@@ -224,7 +245,6 @@ def update_google_sheet(data_row):
         
         sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet(GOOGLE_SHEET_NAME)
         
-        # The order must match the columns in the sheet
         headers = [
             'call_id', 'date', 'duration', 'direction', 'primary_issue', 'issue_category',
             'sentiment', 'urgency', 'resolution_status', 'customer_satisfaction',
@@ -232,25 +252,104 @@ def update_google_sheet(data_row):
             'transcript_snippet', 'transcript'
         ]
         
-        # Ensure all headers have a value, default to ""
         row_to_insert = [data_row.get(h, "") for h in headers]
-
         sheet.append_row(row_to_insert)
-        print("Google Sheet updated successfully.")
+        log("✅ Google Sheet updated successfully.")
     except Exception as e:
-        print(f"Error updating Google Sheet: {e}")
+        log(f"Error updating Google Sheet: {e}")
+        log(f"Full traceback: {traceback.format_exc()}")
 
 # --- Main Logic ---
 def main():
-    """Test version of main function to debug Exotel connection."""
-    print("=== DEBUGGING EXOTEL CONNECTION ===")
+    """Main function to orchestrate the process."""
+    log("=" * 50)
+    log("CX INSIGHTS - CALL PROCESSING STARTING")
+    log("=" * 50)
     
-    # Test connection first
-    if test_exotel_connection():
-        print("✅ Account connection successful, testing calls endpoint...")
+    try:
+        # Check environment variables first
+        if not check_environment_variables():
+            log("🚫 CRITICAL: Missing environment variables. Exiting.")
+            sys.exit(1)
+        
+        # Ensure the processed_calls.txt file exists
+        if not os.path.exists(PROCESSED_CALLS_FILE):
+            with open(PROCESSED_CALLS_FILE, 'w') as f:
+                pass
+            log(f"Created {PROCESSED_CALLS_FILE}")
+
+        # Set OpenAI API key for older versions
+        if hasattr(openai, '__version__') and openai.__version__.startswith('0.'):
+            openai.api_key = OPENAI_API_KEY
+
+        processed_sids = get_processed_calls()
+        log(f"Already processed {len(processed_sids)} calls")
+        
         calls = fetch_recent_exotel_calls()
-        print(f"Retrieved {len(calls)} calls")
-    else:
-        print("❌ Account connection failed")
+        
+        if not calls:
+            log("No new calls to process.")
+            log("=" * 50)
+            log("CALL PROCESSING COMPLETED")
+            log("=" * 50)
+            return
+
+        log(f"Processing {len(calls)} calls...")
+        
+        for i, call in enumerate(calls, 1):
+            call_sid = call.get('Sid')
+            log(f"\n--- Processing call {i}/{len(calls)}: {call_sid} ---")
+            
+            # Skip if already processed
+            if call_sid in processed_sids:
+                log(f"⏭️  Skipping already processed call: {call_sid}")
+                continue
+                
+            # Skip if not completed
+            if call.get('Status') != 'completed':
+                log(f"⏭️  Skipping call not yet completed: {call_sid} (Status: {call.get('Status')})")
+                continue
+                
+            # Skip if no recording
+            if not call.get('RecordingUrl'):
+                log(f"⏭️  Skipping call with no recording: {call_sid}")
+                add_processed_call(call_sid)
+                continue
+
+            # 1. Transcribe
+            transcript = transcribe_audio(call.get('RecordingUrl'))
+            if not transcript:
+                log(f"❌ Failed to get transcript for call {call_sid}. Skipping.")
+                continue
+            
+            # 2. Analyze
+            analysis = analyze_transcript_with_openai(transcript)
+            
+            # 3. Prepare data and update sheet
+            call_data = {
+                'call_id': call.get('Sid'),
+                'date': call.get('DateCreated'),
+                'duration': call.get('Duration'),
+                'direction': call.get('Direction'),
+                'transcript': transcript
+            }
+            
+            full_data_row = {**call_data, **analysis}
+            update_google_sheet(full_data_row)
+            
+            # 4. Mark as processed
+            add_processed_call(call_sid)
+            log(f"✅ Finished processing call: {call_sid}")
     
-    print("=== DEBUG COMPLETE ===")
+    except Exception as e:
+        log(f"🚫 FATAL ERROR in main(): {str(e)}")
+        log(f"Full traceback: {traceback.format_exc()}")
+        sys.exit(1)
+    
+    log("=" * 50)
+    log("CALL PROCESSING COMPLETED SUCCESSFULLY")
+    log("=" * 50)
+
+
+if __name__ == "__main__":
+    main()
