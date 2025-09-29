@@ -80,16 +80,22 @@ def fetch_recent_exotel_calls():
     try:
         # Calculate time range
         start_time = datetime.now(timezone.utc) - timedelta(minutes=15)
-        start_time_str = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+        
+        # --- FIX: Changed the date format to match Exotel's requirement ---
+        # Exotel API expects 'YYYY-MM-DD HH:MM:SS' format.
+        start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S') 
+        # -----------------------------------------------------------------
+
         log(f"Fetching calls from: {start_time_str}")
 
-        # List of possible Exotel API endpoints to try
+        # Based on your screenshot, your account region is Singapore.
+        # The primary endpoint should be api.exotel.com.
+        # This list provides good fallbacks.
         endpoints_to_try = [
             ("Singapore Cluster", f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"),
             ("Mumbai Cluster", f"https://api.in.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"),
-            ("Twilix Endpoint", f"https://twilix.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"),
-            ("Account Subdomain", f"https://{EXOTEL_ACCOUNT_SID}.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"),
-            ("SG Regional", f"https://api.sg.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json")
+            ("SG Regional", f"https://api.sg.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"),
+            ("Twilix Endpoint", f"https://twilix.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json")
         ]
         
         params = {
@@ -127,7 +133,7 @@ def fetch_recent_exotel_calls():
                         log(f"  - Has Recording: {bool(first_call.get('RecordingUrl'))}")
                     
                     return calls
-                    
+                
                 elif response.status_code == 401:
                     log(f"❌ Authentication failed for {endpoint_name}")
                     log(f"Response: {response.text[:200]}")
@@ -159,6 +165,7 @@ def fetch_recent_exotel_calls():
         log(f"EXCEPTION in fetch_recent_exotel_calls: {str(e)}")
         log(f"Full traceback: {traceback.format_exc()}")
         return []
+
 
 def transcribe_audio(audio_url):
     """Submits audio for transcription to AssemblyAI and waits for the result."""
