@@ -19,6 +19,9 @@ GOOGLE_SHEET_NAME = 'Sheet1'
 # The GOOGLE_CREDENTIALS_JSON is a multi-line secret, it needs to be loaded carefully
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
 
+# CORRECTED: Use the specific Exotel API host for the Singapore region.
+EXOTEL_API_HOST = 'api.ap-southeast-1.exotel.com'
+
 # File to store processed call SIDs
 PROCESSED_CALLS_FILE = 'processed_calls.txt'
 
@@ -42,11 +45,11 @@ def fetch_recent_exotel_calls():
     try:
         # Exotel API uses UTC. We fetch calls from the last 15 minutes.
         start_time = datetime.now(timezone.utc) - timedelta(minutes=15)
-        # CORRECTED: Use ISO 8601 format (YYYY-MM-DDTHH:MM:SSZ) for the date.
-        # This is a more standard and reliable format for APIs.
         start_time_str = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-        url = f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"
+        # CORRECTED: Build the URL with the correct regional host.
+        url = f"https://{EXOTEL_API_HOST}/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"
+        
         params = {
             'DateCreated': f'gte:{start_time_str}',
             'PageSize': 20 # Adjust as needed
@@ -97,7 +100,8 @@ def analyze_transcript_with_openai(transcript):
     if not transcript:
         return {}
     
-    openai.api_key = OPENAI_API_KEY
+    # Initialize the OpenAI client
+    client = openai.OpenAI(api_key=OPENAI_API_KEY)
     
     system_prompt = """
     You are an expert call center analyst. Analyze the following call transcript and extract the specified information.
@@ -117,7 +121,7 @@ def analyze_transcript_with_openai(transcript):
     """
     
     try:
-        response = openai.chat.completions.create(
+        response = client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -163,6 +167,11 @@ def update_google_sheet(data_row):
 # --- Main Logic ---
 def main():
     """Main function to orchestrate the process."""
+    # openai.api_key needs to be set for older versions of the library.
+    # For openai > 1.0, the client is initialized with the key instead.
+    if openai.__version__.startswith('0.'):
+      openai.api_key = OPENAI_API_KEY
+
     processed_sids = get_processed_calls()
     calls = fetch_recent_exotel_calls()
     
