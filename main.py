@@ -78,94 +78,76 @@ def fetch_recent_exotel_calls():
     log("Fetching recent calls from Exotel...")
     
     try:
-        # Calculate time range
+        # Define a start and end time for the date range
         start_time = datetime.now(timezone.utc) - timedelta(minutes=15)
+        end_time = datetime.now(timezone.utc) 
+
+        start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
+        end_time_str = end_time.strftime('%Y-%m-%d %H:%M:%S')
+
+        # Combine gte (start) and lte (end) with a semicolon as required by the API
+        date_range_str = f"gte:{start_time_str};lte:{end_time_str}"
         
-        # --- FIX: Changed the date format to match Exotel's requirement ---
-        # Exotel API expects 'YYYY-MM-DD HH:MM:SS' format.
-        start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S') 
-        # -----------------------------------------------------------------
+        log(f"Fetching calls within range: {start_time_str} to {end_time_str}")
 
-        log(f"Fetching calls from: {start_time_str}")
-
-        # Based on your screenshot, your account region is Singapore.
-        # The primary endpoint should be api.exotel.com.
-        # This list provides good fallbacks.
-        endpoints_to_try = [
-            ("Singapore Cluster", f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"),
-            ("Mumbai Cluster", f"https://api.in.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"),
-            ("SG Regional", f"https://api.sg.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"),
-            ("Twilix Endpoint", f"https://twilix.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json")
-        ]
+        # --- OPTIMIZATION: Target only the Singapore cluster endpoint ---
+        endpoint_name = "Singapore Cluster"
+        url = f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"
+        # -------------------------------------------------------------
         
         params = {
-            'DateCreated': f'gte:{start_time_str}',
+            'DateCreated': date_range_str,
             'PageSize': 20
         }
         
         log(f"Request params: {params}")
         
-        for endpoint_name, url in endpoints_to_try:
-            try:
-                log(f"Trying {endpoint_name}: {url}")
-                response = requests.get(
-                    url, 
-                    auth=(EXOTEL_API_KEY, EXOTEL_API_TOKEN), 
-                    params=params, 
-                    timeout=30
-                )
+        try:
+            log(f"Trying {endpoint_name}: {url}")
+            response = requests.get(
+                url, 
+                auth=(EXOTEL_API_KEY, EXOTEL_API_TOKEN), 
+                params=params, 
+                timeout=30
+            )
+            
+            log(f"Response status: {response.status_code}")
+            
+            if response.status_code == 200:
+                log(f"✅ SUCCESS! Connected to {endpoint_name}")
+                data = response.json()
+                calls = data.get('Calls', [])
+                log(f"Found {len(calls)} calls in the last 15 minutes")
                 
-                log(f"Response status: {response.status_code}")
+                if calls:
+                    log("First call details:")
+                    first_call = calls[0]
+                    log(f"  - Call SID: {first_call.get('Sid')}")
+                    log(f"  - Status: {first_call.get('Status')}")
+                    log(f"  - Date Created: {first_call.get('DateCreated')}")
                 
-                if response.status_code == 200:
-                    log(f"✅ SUCCESS! Working endpoint: {endpoint_name}")
-                    data = response.json()
-                    calls = data.get('Calls', [])
-                    log(f"Found {len(calls)} calls in the last 15 minutes")
-                    
-                    if calls:
-                        log("First call details:")
-                        first_call = calls[0]
-                        log(f"  - Call SID: {first_call.get('Sid')}")
-                        log(f"  - Status: {first_call.get('Status')}")
-                        log(f"  - Direction: {first_call.get('Direction')}")
-                        log(f"  - Date Created: {first_call.get('DateCreated')}")
-                        log(f"  - Has Recording: {bool(first_call.get('RecordingUrl'))}")
-                    
-                    return calls
-                
-                elif response.status_code == 401:
-                    log(f"❌ Authentication failed for {endpoint_name}")
-                    log(f"Response: {response.text[:200]}")
-                elif response.status_code == 404:
-                    log(f"❌ Account not found on {endpoint_name}")
-                else:
-                    log(f"❌ {endpoint_name} returned status {response.status_code}")
-                    log(f"Response: {response.text[:200]}")
-                    
-            except requests.exceptions.ConnectionError as e:
-                log(f"❌ Connection failed for {endpoint_name}: {str(e)[:100]}")
-            except requests.exceptions.Timeout as e:
-                log(f"❌ Timeout for {endpoint_name}: {str(e)[:100]}")
-            except Exception as e:
-                log(f"❌ Error with {endpoint_name}: {str(e)[:100]}")
+                return calls
+            
+            # Handle specific error codes
+            elif response.status_code == 401:
+                log(f"❌ Authentication failed. Please check your API Key and Token.")
+            elif response.status_code == 404:
+                log(f"❌ Account not found. Please check your Account SID.")
+            else:
+                log(f"❌ {endpoint_name} returned status {response.status_code}")
+                log(f"Response: {response.text[:300]}") # Show more of the response
+            
+        except requests.exceptions.RequestException as e:
+            log(f"❌ Network error while connecting to {endpoint_name}: {e}")
         
-        # If we get here, no endpoint worked
-        log("🚫 No working Exotel endpoint found!")
-        log("Please verify:")
-        log("1. Your EXOTEL_ACCOUNT_SID is correct")
-        log("2. Your EXOTEL_API_KEY is correct") 
-        log("3. Your EXOTEL_API_TOKEN is correct")
-        log("4. Your Exotel account is active and has API access enabled")
-        log("5. Your account has made calls in the last 15 minutes")
-        
+        # If we get here, the single endpoint call failed
+        log("🚫 Failed to fetch calls from Exotel.")
         return []
         
     except Exception as e:
         log(f"EXCEPTION in fetch_recent_exotel_calls: {str(e)}")
         log(f"Full traceback: {traceback.format_exc()}")
         return []
-
 
 def transcribe_audio(audio_url):
     """Submits audio for transcription to AssemblyAI and waits for the result."""
