@@ -14,7 +14,7 @@ PINECONE_INDEX_NAME = 'call-insights'
 app = Flask(__name__, static_folder='.', static_url_path='')
 
 # --- Initialize Clients ---
-# FIX: Initialize client variables to None outside the try block
+# Initialize client variables to None outside the try block
 openai_client = None
 pc = None
 index = None
@@ -35,9 +35,10 @@ def index():
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    # FIX: Check if clients were successfully initialized before using them
+    # Check if clients were successfully initialized before using them
     if not openai_client or not index:
-        return jsonify({"error": "Backend services are not available. Please check the server logs."}), 503
+        # Return a user-facing error in the expected format for the frontend
+        return jsonify({"answer": "Sorry, the connection to the AI services failed. Please check the server configuration and logs on Render."})
 
     try:
         user_query = request.json.get('question')
@@ -100,7 +101,8 @@ def chat():
 
     except Exception as e:
         print(f"Error in /chat endpoint: {e}")
-        return jsonify({"error": "An internal error occurred."}), 500
+        # Return a user-facing error in the expected format
+        return jsonify({"answer": "Sorry, an unexpected error occurred while processing your request."})
 
 if __name__ == '__main__':
     # Use Gunicorn or another WSGI server in production
