@@ -1,45 +1,106 @@
-# .github/workflows/call_processor.yml
-
-name: Fetch and Process Exotel Calls
+name: CX Insights - Process Calls
 
 on:
   schedule:
-    # Runs every 15 minutes
-    - cron: '*/15 * * * *'
-  workflow_dispatch: # Allows manual triggering from the Actions tab
+    - cron: '*/15 * * * *'  # Run every 15 minutes
+  workflow_dispatch:  # Allow manual triggering
+
+# Add these permissions to allow writing back to the repo
+permissions:
+  contents: write
+  actions: read
 
 jobs:
   process-calls:
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Run call processing script
-        env:
-          EXOTEL_ACCOUNT_SID: ${{ secrets.EXOTEL_ACCOUNT_SID }}
-          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
-          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
-          ASSEMBLYAI_API_KEY: ${{ secrets.ASSEMBLYAI_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
-        run: python main.py
-
-      - name: Commit processed calls file
-        run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0  # Fetch full history for proper git operations
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Create processed_calls.txt if it doesn't exist
+      run: |
+        if [ ! -f processed_calls.txt ]; then
+          touch processed_calls.txt
+          echo "Created processed_calls.txt file"
+        fi
+    
+    - name: Run call processing script
+      env:
+        EXOTEL_ACCOUNT_SID: ${{ secrets.EXOTEL_ACCOUNT_SID }}
+        EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+        EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+        ASSEMBLYAI_API_KEY: ${{ secrets.ASSEMBLYAI_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+      run: |
+        echo "Starting call processing..."
+        python main.py
+        echo "Call processing completed"
+    
+    - name: Configure Git
+      run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+    
+    - name: Check for changes and commit
+      run: |
+        # Check if processed_calls.txt has changes
+        if git diff --quiet processed_calls.txt; then
+          echo "No changes in processed_calls.txt"
+        else
+          echo "Changes detected in processed_calls.txt"
           git add processed_calls.txt
-          # Commit only if there are changes
-          git diff --quiet --exit-code HEAD -- processed_calls.txt || git commit -m "Update processed calls log"
-          git push
+          git commit -m "Update processed calls log - $(date -u '+%Y-%m-%d %H:%M:%S UTC') [skip ci]"
+          
+          # Retry push with exponential backoff in case of conflicts
+          max_retries=3
+          retry_count=0
+          while [ $retry_count -lt $max_retries ]; do
+            if git push origin main; then
+              echo "Successfully pushed changes"
+              break
+            else
+              retry_count=$((retry_count + 1))
+              if [ $retry_count -lt $max_retries ]; then
+                echo "Push failed, retrying in $((retry_count * 5)) seconds... (attempt $retry_count/$max_retries)"
+                sleep $((retry_count * 5))
+                git pull --rebase origin main
+              else
+                echo "Push failed after $max_retries attempts"
+                exit 1
+              fi
+            fi
+          done
+        fi
+    
+    - name: Report status
+      if: always()
+      run: |
+        if [ -f processed_calls.txt ]; then
+          echo "Processed calls file exists with $(wc -l < processed_calls.txt) entries"
+        else
+          echo "Warning: processed_calls.txt file not found"
+        fi
+        echo "Workflow completed with status: ${{ job.status }}"
