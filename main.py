@@ -46,7 +46,7 @@ def fetch_recent_exotel_calls():
 
         # CORRECTED: Construct the URL with the Account SID as the subdomain for the Singapore region.
         # This is a common pattern for region-specific APIs.
-        url = f"https://{EXOTEL_ACCOUNT_SID}.api.sg.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"
+        url = f"https://{EXOTEL_ACCOUNT_SID}.api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"
         
         params = {
             'DateCreated': f'gte:{start_time_str}',
