@@ -22,14 +22,17 @@ index = None
 try:
     openai_client = OpenAI(api_key=OPENAI_API_KEY)
     pc = Pinecone(api_key=PINECONE_API_KEY)
+    # This is the Pinecone index object
     index = pc.Index(PINECONE_INDEX_NAME)
     print("Successfully initialized OpenAI and Pinecone clients.")
 except Exception as e:
     print(f"ERROR: Could not initialize clients during startup: {e}")
 
 # --- API Endpoints ---
+
+# FIX: Renamed the function from 'index' to 'serve_index_page' to avoid name collision
 @app.route('/')
-def index():
+def serve_index_page():
     """Serves the main HTML file."""
     return send_from_directory('.', 'index.html')
 
