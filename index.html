@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Customer Call Insights</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        #chat-window {
+            height: calc(100vh - 150px);
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex flex-col items-center justify-center h-screen">
+
+    <div class="w-full max-w-2xl bg-white rounded-lg shadow-xl flex flex-col h-full md:h-auto md:max-h-[90vh]">
+        <header class="bg-gray-800 text-white p-4 rounded-t-lg">
+            <h1 class="text-xl font-bold text-center">Customer Call Insights</h1>
+        </header>
+
+        <main id="chat-window" class="flex-1 p-6 overflow-y-auto space-y-4">
+            <!-- Chat messages will be appended here -->
+            <div class="flex items-start gap-3">
+                <div class="bg-gray-800 text-white p-2 rounded-full h-8 w-8 flex items-center justify-center font-bold">AI</div>
+                <div class="bg-gray-200 text-gray-800 p-3 rounded-lg max-w-xs md:max-w-md">
+                    <p>Hello! Ask me anything about the customer call data. For example: "How many calls had a negative sentiment?" or "Summarize the main issues from today."</p>
+                </div>
+            </div>
+        </main>
+
+        <footer class="p-4 border-t border-gray-200 bg-white rounded-b-lg">
+            <form id="chat-form" class="flex items-center gap-3">
+                <input type="text" id="message-input" placeholder="Type your question here..." class="flex-1 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-800 transition">
+                <button type="submit" id="send-button" class="bg-gray-800 text-white font-semibold px-6 py-3 rounded-lg hover:bg-gray-700 transition active:scale-95 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                    Send
+                </button>
+            </form>
+        </footer>
+    </div>
+
+    <script>
+        const chatForm = document.getElementById('chat-form');
+        const messageInput = document.getElementById('message-input');
+        const chatWindow = document.getElementById('chat-window');
+        const sendButton = document.getElementById('send-button');
+
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = messageInput.value.trim();
+            if (!message) return;
+
+            // Display user message
+            appendMessage(message, 'user');
+            messageInput.value = '';
+            setLoading(true);
+
+            try {
+                // Send message to the backend
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ question: message }),
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Server error: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                appendMessage(data.answer, 'ai');
+
+            } catch (error) {
+                console.error('Error:', error);
+                appendMessage('Sorry, something went wrong. Please check the console for details.', 'ai');
+            } finally {
+                setLoading(false);
+            }
+        });
+
+        function setLoading(isLoading) {
+            messageInput.disabled = isLoading;
+            sendButton.disabled = isLoading;
+            if (isLoading) {
+                sendButton.textContent = '...';
+            } else {
+                sendButton.textContent = 'Send';
+            }
+        }
+
+        function appendMessage(message, sender) {
+            const messageWrapper = document.createElement('div');
+            
+            if (sender === 'user') {
+                messageWrapper.className = "flex items-start gap-3 justify-end";
+                messageWrapper.innerHTML = `
+                    <div class="bg-gray-800 text-white p-3 rounded-lg max-w-xs md:max-w-md">
+                        <p>${message}</p>
+                    </div>
+                    <div class="bg-gray-200 text-gray-800 p-2 rounded-full h-8 w-8 flex items-center justify-center font-bold">You</div>
+                `;
+            } else {
+                messageWrapper.className = "flex items-start gap-3";
+                messageWrapper.innerHTML = `
+                    <div class="bg-gray-800 text-white p-2 rounded-full h-8 w-8 flex items-center justify-center font-bold">AI</div>
+                    <div class="bg-gray-200 text-gray-800 p-3 rounded-lg max-w-xs md:max-w-md">
+                        <p>${message.replace(/\n/g, '<br>')}</p>
+                    </div>
+                `;
+            }
+
+            chatWindow.appendChild(messageWrapper);
+            chatWindow.scrollTop = chatWindow.scrollHeight; // Auto-scroll to the bottom
+        }
+    </script>
+</body>
+</html>
