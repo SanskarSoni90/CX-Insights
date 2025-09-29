@@ -21,9 +21,6 @@ GOOGLE_SHEET_NAME = 'Sheet1'
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
 
 # File to store processed call SIDs
-PROCESSED_CALLS_FILE = 'processed_calls.txt'
-
-# --- Helper Functions ---
 
 def log(message):
     """Enhanced logging with timestamp and flush."""
@@ -59,18 +56,6 @@ def check_environment_variables():
     
     log("✅ All environment variables are set")
     return True
-
-def get_processed_calls():
-    """Reads the set of already processed call SIDs from a file."""
-    if not os.path.exists(PROCESSED_CALLS_FILE):
-        return set()
-    with open(PROCESSED_CALLS_FILE, 'r') as f:
-        return set(line.strip() for line in f)
-
-def add_processed_call(sid):
-    """Adds a new call SID to the processed calls file."""
-    with open(PROCESSED_CALLS_FILE, 'a') as f:
-        f.write(sid + '\n')
 
 def fetch_recent_exotel_calls():
     """Fetches calls from Exotel from the last 15 minutes."""
@@ -261,19 +246,24 @@ def main():
             log("🚫 CRITICAL: Missing environment variables. Exiting.")
             sys.exit(1)
         
-        # Ensure the processed_calls.txt file exists
-        if not os.path.exists(PROCESSED_CALLS_FILE):
-            with open(PROCESSED_CALLS_FILE, 'w') as f:
-                pass
-            log(f"Created {PROCESSED_CALLS_FILE}")
+        # --- NEW: Connect to Google Sheets and get already processed SIDs ---
+        log("Connecting to Google Sheets to get processed calls...")
+        creds_json = json.loads(GOOGLE_CREDENTIALS_JSON)
+        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet(GOOGLE_SHEET_NAME)
+        
+        # Fetch all values from the first column (assuming 'call_id' is column A)
+        # The [1:] skips the header row
+        processed_sids = set(sheet.col_values(1)[1:])
+        log(f"Found {len(processed_sids)} calls already processed in the Google Sheet.")
+        # --------------------------------------------------------------------
 
         # Set OpenAI API key for older versions
         if hasattr(openai, '__version__') and openai.__version__.startswith('0.'):
             openai.api_key = OPENAI_API_KEY
-
-        processed_sids = get_processed_calls()
-        log(f"Already processed {len(processed_sids)} calls")
-        
+            
         calls = fetch_recent_exotel_calls()
         
         if not calls:
@@ -283,26 +273,36 @@ def main():
             log("=" * 50)
             return
 
-        log(f"Processing {len(calls)} calls...")
+        new_calls_to_process = [call for call in calls if call.get('Sid') not in processed_sids]
         
-        for i, call in enumerate(calls, 1):
-            call_sid = call.get('Sid')
-            log(f"\n--- Processing call {i}/{len(calls)}: {call_sid} ---")
+        if not new_calls_to_process:
+            log("All fetched calls have already been processed. Nothing to do.")
+            return
             
-            # Skip if already processed
+        log(f"Processing {len(new_calls_to_process)} new calls...")
+        
+        for i, call in enumerate(new_calls_to_process, 1):
+            call_sid = call.get('Sid')
+            log(f"\n--- Processing call {i}/{len(new_calls_to_process)}: {call_sid} ---")
+            
+            # This check is now redundant but kept for safety
             if call_sid in processed_sids:
                 log(f"⏭️  Skipping already processed call: {call_sid}")
                 continue
                 
-            # Skip if not completed
             if call.get('Status') != 'completed':
                 log(f"⏭️  Skipping call not yet completed: {call_sid} (Status: {call.get('Status')})")
                 continue
                 
-            # Skip if no recording
             if not call.get('RecordingUrl'):
                 log(f"⏭️  Skipping call with no recording: {call_sid}")
-                add_processed_call(call_sid)
+                # We still add it to the sheet to prevent re-checking it later
+                # but with minimal data.
+                update_google_sheet({
+                    'call_id': call_sid,
+                    'date': call.get('DateCreated'),
+                    'summary': 'No recording available'
+                })
                 continue
 
             # 1. Transcribe
@@ -326,8 +326,6 @@ def main():
             full_data_row = {**call_data, **analysis}
             update_google_sheet(full_data_row)
             
-            # 4. Mark as processed
-            add_processed_call(call_sid)
             log(f"✅ Finished processing call: {call_sid}")
     
     except Exception as e:
