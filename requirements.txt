@@ -6,3 +6,4 @@ pandas
 Flask
 gunicorn
 tabulate
+pinecone-client
