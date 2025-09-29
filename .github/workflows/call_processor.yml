@@ -50,6 +50,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        pip install python-dotenv # Added to ensure the indexer script runs
         
     - name: 1. Run Call Processing Script
       run: |
@@ -67,3 +68,4 @@ jobs:
       if: always()
       run: |
         echo "Workflow completed with status: ${{ job.status }}"
+
