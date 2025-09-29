@@ -19,8 +19,8 @@ GOOGLE_SHEET_NAME = 'Sheet1'
 # The GOOGLE_CREDENTIALS_JSON is a multi-line secret, it needs to be loaded carefully
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
 
-# CORRECTED: Use the specific Exotel API host for the Singapore region.
-EXOTEL_API_HOST = 'api.ap-southeast-1.exotel.com'
+# CORRECTED: Use the official Exotel API host for the Singapore region.
+EXOTEL_API_HOST = 'api.sg.exotel.com'
 
 # File to store processed call SIDs
 PROCESSED_CALLS_FILE = 'processed_calls.txt'
@@ -167,6 +167,11 @@ def update_google_sheet(data_row):
 # --- Main Logic ---
 def main():
     """Main function to orchestrate the process."""
+    # CORRECTED: Ensure the processed_calls.txt file exists to prevent git errors.
+    if not os.path.exists(PROCESSED_CALLS_FILE):
+        with open(PROCESSED_CALLS_FILE, 'w') as f:
+            pass # Creates an empty file if it doesn't exist.
+
     # openai.api_key needs to be set for older versions of the library.
     # For openai > 1.0, the client is initialized with the key instead.
     if openai.__version__.startswith('0.'):
