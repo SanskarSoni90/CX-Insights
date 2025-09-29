@@ -42,7 +42,9 @@ def fetch_recent_exotel_calls():
     try:
         # Exotel API uses UTC. We fetch calls from the last 15 minutes.
         start_time = datetime.now(timezone.utc) - timedelta(minutes=15)
-        start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
+        # CORRECTED: Use ISO 8601 format (YYYY-MM-DDTHH:MM:SSZ) for the date.
+        # This is a more standard and reliable format for APIs.
+        start_time_str = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
 
         url = f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"
         params = {
@@ -215,3 +217,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
