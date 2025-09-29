@@ -62,9 +62,7 @@ def find_new_rows_to_index(df):
         batch_ids = all_sheet_ids[i:i+100]
         fetch_response = index.fetch(ids=batch_ids)
         
-        # --- FIX: Access the 'vectors' attribute directly ---
         existing_ids.update(fetch_response.vectors.keys())
-        # ---------------------------------------------------
 
     new_ids = set(all_sheet_ids) - existing_ids
     
@@ -81,7 +79,10 @@ def create_embeddings_and_upsert(df):
         return
 
     print(f"Creating embeddings for {len(df)} new rows...")
-    EMBEDDING_MODEL = "text-embedding-3-small"
+    # --- FIX: Change model and specify dimensions to match Pinecone's allowed values ---
+    EMBEDDING_MODEL = "text-embedding-3-large"
+    PINECONE_DIMENSION = 1024 # This must match the dimension you select in Pinecone
+    # ----------------------------------------------------------------------------------
 
     batch_size = 100
     for i in range(0, len(df), batch_size):
@@ -94,7 +95,13 @@ def create_embeddings_and_upsert(df):
             ". Action items: " + batch['action_items'].astype(str)
         ).tolist()
 
-        response = openai_client.embeddings.create(input=texts_to_embed, model=EMBEDDING_MODEL)
+        # --- FIX: Add the 'dimensions' parameter to the API call ---
+        response = openai_client.embeddings.create(
+            input=texts_to_embed, 
+            model=EMBEDDING_MODEL,
+            dimensions=PINECONE_DIMENSION
+        )
+        # ----------------------------------------------------------
         embeddings = [item.embedding for item in response.data]
 
         vectors_to_upsert = []
