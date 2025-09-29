@@ -40,26 +40,104 @@ def fetch_recent_exotel_calls():
     """Fetches calls from Exotel from the last 15 minutes."""
     print("Fetching recent calls from Exotel...")
     try:
-        # Exotel API uses UTC. We fetch calls from the last 15 minutes.
+        # Calculate time range
         start_time = datetime.now(timezone.utc) - timedelta(minutes=15)
         start_time_str = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-        # CORRECTED: Construct the URL with the Account SID as the subdomain for the Singapore region.
-        # This is a common pattern for region-specific APIs.
-        url = f"https://{EXOTEL_ACCOUNT_SID}.api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"
+        # List of possible Exotel API endpoints to try
+        endpoints_to_try = [
+            f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json",
+            f"https://api.in.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json", 
+            f"https://twilix.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json",
+            f"https://{EXOTEL_ACCOUNT_SID}.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json",
+            f"https://api.sg.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"
+        ]
         
         params = {
             'DateCreated': f'gte:{start_time_str}',
-            'PageSize': 20 # Adjust as needed
+            'PageSize': 20
         }
-        response = requests.get(url, auth=(EXOTEL_API_KEY, EXOTEL_API_TOKEN), params=params)
-        response.raise_for_status()
-        data = response.json()
-        print(f"Found {len(data.get('Calls', []))} calls in the last 15 minutes.")
-        return data.get('Calls', [])
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching calls from Exotel: {e}")
+        
+        last_error = None
+        
+        for url in endpoints_to_try:
+            try:
+                print(f"Trying endpoint: {url}")
+                response = requests.get(url, auth=(EXOTEL_API_KEY, EXOTEL_API_TOKEN), params=params, timeout=30)
+                
+                if response.status_code == 200:
+                    print(f"✅ SUCCESS! Working endpoint: {url}")
+                    data = response.json()
+                    print(f"Found {len(data.get('Calls', []))} calls in the last 15 minutes.")
+                    
+                    # Save the working endpoint for future reference
+                    print(f"🔥 IMPORTANT: Use this URL in your code: {url}")
+                    return data.get('Calls', [])
+                    
+                elif response.status_code == 401:
+                    print(f"❌ Authentication failed for {url} - check your API credentials")
+                    print(f"Response: {response.text}")
+                elif response.status_code == 404:
+                    print(f"❌ Account not found on {url} - wrong endpoint for your account")
+                else:
+                    print(f"❌ {url} returned status {response.status_code}: {response.text}")
+                    
+            except requests.exceptions.ConnectionError as e:
+                print(f"❌ Connection failed for {url}: {str(e)}")
+                last_error = e
+            except Exception as e:
+                print(f"❌ Error with {url}: {str(e)}")
+                last_error = e
+        
+        # If we get here, no endpoint worked
+        print("🚫 No working Exotel endpoint found!")
+        print("Please check:")
+        print("1. Your EXOTEL_ACCOUNT_SID is correct")
+        print("2. Your EXOTEL_API_KEY is correct") 
+        print("3. Your EXOTEL_API_TOKEN is correct")
+        print("4. Your Exotel account is active and has API access")
+        
+        if last_error:
+            raise last_error
         return []
+        
+    except Exception as e:
+        print(f"Final error fetching calls from Exotel: {e}")
+        return []
+
+
+def test_exotel_connection():
+    """Test function to verify Exotel API connectivity and credentials."""
+    print("=== Testing Exotel API Connection ===")
+    print(f"Account SID: {EXOTEL_ACCOUNT_SID}")
+    print(f"API Key: {EXOTEL_API_KEY[:10]}...") # Only show first 10 chars for security
+    print(f"API Token: {'*' * len(EXOTEL_API_TOKEN)}")
+    
+    # Try to get account details first
+    endpoints_to_try = [
+        f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}.json",
+        f"https://api.in.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}.json",
+        f"https://twilix.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}.json"
+    ]
+    
+    for url in endpoints_to_try:
+        try:
+            print(f"Testing account endpoint: {url}")
+            response = requests.get(url, auth=(EXOTEL_API_KEY, EXOTEL_API_TOKEN), timeout=10)
+            
+            if response.status_code == 200:
+                print(f"✅ Account endpoint working: {url}")
+                account_info = response.json()
+                print(f"Account Name: {account_info.get('account', {}).get('name', 'N/A')}")
+                print(f"Account Status: {account_info.get('account', {}).get('status', 'N/A')}")
+                return True
+            else:
+                print(f"❌ Status {response.status_code}: {response.text[:200]}")
+                
+        except Exception as e:
+            print(f"❌ Error: {e}")
+    
+    return False
 
 def transcribe_audio(audio_url):
     """Submits audio for transcription to AssemblyAI and waits for the result."""
@@ -164,69 +242,15 @@ def update_google_sheet(data_row):
 
 # --- Main Logic ---
 def main():
-    """Main function to orchestrate the process."""
-    # CORRECTED: Ensure the processed_calls.txt file exists to prevent git errors.
-    if not os.path.exists(PROCESSED_CALLS_FILE):
-        with open(PROCESSED_CALLS_FILE, 'w') as f:
-            pass # Creates an empty file if it doesn't exist.
-
-    # openai.api_key needs to be set for older versions of the library.
-    # For openai > 1.0, the client is initialized with the key instead.
-    if openai.__version__.startswith('0.'):
-      openai.api_key = OPENAI_API_KEY
-
-    processed_sids = get_processed_calls()
-    calls = fetch_recent_exotel_calls()
+    """Test version of main function to debug Exotel connection."""
+    print("=== DEBUGGING EXOTEL CONNECTION ===")
     
-    if not calls:
-        print("No new calls to process.")
-        return
-
-    for call in calls:
-        call_sid = call.get('Sid')
-        
-        # Skip if already processed or not completed
-        if call_sid in processed_sids:
-            print(f"Skipping already processed call: {call_sid}")
-            continue
-        if call.get('Status') != 'completed':
-            print(f"Skipping call not yet completed: {call_sid}")
-            continue
-        if not call.get('RecordingUrl'):
-            print(f"Skipping call with no recording: {call_sid}")
-            add_processed_call(call_sid) # Add to processed to avoid re-checking
-            continue
-
-        print(f"--- Processing new call: {call_sid} ---")
-        
-        # 1. Transcribe
-        transcript = transcribe_audio(call.get('RecordingUrl'))
-        if not transcript:
-            print(f"Failed to get transcript for call {call_sid}. Skipping.")
-            continue
-        
-        # 2. Analyze
-        analysis = analyze_transcript_with_openai(transcript)
-        
-        # 3. Prepare data and update sheet
-        call_data = {
-            'call_id': call.get('Sid'),
-            'date': call.get('DateCreated'),
-            'duration': call.get('Duration'),
-            'direction': call.get('Direction'),
-            'transcript': transcript
-        }
-        
-        # Combine call data with analysis results
-        full_data_row = {**call_data, **analysis}
-        
-        update_google_sheet(full_data_row)
-        
-        # 4. Mark as processed
-        add_processed_call(call_sid)
-        print(f"--- Finished processing call: {call_sid} ---")
-
-
-if __name__ == "__main__":
-    main()
-
+    # Test connection first
+    if test_exotel_connection():
+        print("✅ Account connection successful, testing calls endpoint...")
+        calls = fetch_recent_exotel_calls()
+        print(f"Retrieved {len(calls)} calls")
+    else:
+        print("❌ Account connection failed")
+    
+    print("=== DEBUG COMPLETE ===")
