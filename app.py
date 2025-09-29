@@ -14,13 +14,18 @@ PINECONE_INDEX_NAME = 'call-insights'
 app = Flask(__name__, static_folder='.', static_url_path='')
 
 # --- Initialize Clients ---
+# FIX: Initialize client variables to None outside the try block
+openai_client = None
+pc = None
+index = None
+
 try:
     openai_client = OpenAI(api_key=OPENAI_API_KEY)
     pc = Pinecone(api_key=PINECONE_API_KEY)
     index = pc.Index(PINECONE_INDEX_NAME)
     print("Successfully initialized OpenAI and Pinecone clients.")
 except Exception as e:
-    print(f"ERROR: Could not initialize clients: {e}")
+    print(f"ERROR: Could not initialize clients during startup: {e}")
 
 # --- API Endpoints ---
 @app.route('/')
@@ -30,6 +35,10 @@ def index():
 
 @app.route('/chat', methods=['POST'])
 def chat():
+    # FIX: Check if clients were successfully initialized before using them
+    if not openai_client or not index:
+        return jsonify({"error": "Backend services are not available. Please check the server logs."}), 503
+
     try:
         user_query = request.json.get('question')
         if not user_query:
