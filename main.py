@@ -19,9 +19,6 @@ GOOGLE_SHEET_NAME = 'Sheet1'
 # The GOOGLE_CREDENTIALS_JSON is a multi-line secret, it needs to be loaded carefully
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
 
-# CORRECTED: Use the official Exotel API host for the Singapore region.
-EXOTEL_API_HOST = 'api.sg.exotel.com'
-
 # File to store processed call SIDs
 PROCESSED_CALLS_FILE = 'processed_calls.txt'
 
@@ -47,8 +44,9 @@ def fetch_recent_exotel_calls():
         start_time = datetime.now(timezone.utc) - timedelta(minutes=15)
         start_time_str = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-        # CORRECTED: Build the URL with the correct regional host.
-        url = f"https://{EXOTEL_API_HOST}/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"
+        # CORRECTED: Construct the URL with the Account SID as the subdomain for the Singapore region.
+        # This is a common pattern for region-specific APIs.
+        url = f"https://{EXOTEL_ACCOUNT_SID}.api.sg.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls.json"
         
         params = {
             'DateCreated': f'gte:{start_time_str}',
