@@ -14,7 +14,6 @@ PINECONE_INDEX_NAME = 'call-insights'
 app = Flask(__name__, static_folder='.', static_url_path='')
 
 # --- Initialize Clients ---
-# Initialize client variables to None outside the try block
 openai_client = None
 pc = None
 index = None
@@ -22,7 +21,6 @@ index = None
 try:
     openai_client = OpenAI(api_key=OPENAI_API_KEY)
     pc = Pinecone(api_key=PINECONE_API_KEY)
-    # This is the Pinecone index object
     index = pc.Index(PINECONE_INDEX_NAME)
     print("Successfully initialized OpenAI and Pinecone clients.")
 except Exception as e:
@@ -30,7 +28,6 @@ except Exception as e:
 
 # --- API Endpoints ---
 
-# FIX: Renamed the function from 'index' to 'serve_index_page' to avoid name collision
 @app.route('/')
 def serve_index_page():
     """Serves the main HTML file."""
@@ -38,9 +35,7 @@ def serve_index_page():
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    # Check if clients were successfully initialized before using them
     if not openai_client or not index:
-        # Return a user-facing error in the expected format for the frontend
         return jsonify({"answer": "Sorry, the connection to the AI services failed. Please check the server configuration and logs on Render."})
 
     try:
@@ -48,7 +43,6 @@ def chat():
         if not user_query:
             return jsonify({"error": "No question provided"}), 400
 
-        # Use the same model and dimension as the indexing script
         EMBEDDING_MODEL = "text-embedding-3-large"
         PINECONE_DIMENSION = 1024
         
@@ -71,66 +65,47 @@ def chat():
         if not query_results['matches']:
             return jsonify({"answer": "No relevant call records found for this query."})
 
-        context = "Based on the call records, here is the relevant information:\n"
-        for match in query_results['matches']:
+        context = "Call Records:\n"
+        for i, match in enumerate(query_results['matches'], 1):
             metadata = match['metadata']
             context += (
-                f"- Call on {metadata.get('date', 'N/A')}: "
-                f"Summary: {metadata.get('summary', 'N/A')} "
+                f"{i}. Date: {metadata.get('date', 'N/A')} | "
+                f"Summary: {metadata.get('summary', 'N/A')} | "
                 f"Sentiment: {metadata.get('sentiment', 'N/A')}\n"
             )
 
-        # 4. Create the final prompt for the LLM
-        final_prompt = f"""You are an expert Customer Success Analyst with deep expertise in call center operations, customer experience, and data-driven insights.
-        Context from relevant calls:
-        {context}
+        # 4. Create the refined prompt for data-heavy, professional responses
+        final_prompt = f"""Context:
+{context}
 
-        User's Question: {user_query}
+Question: {user_query}
 
-        INSTRUCTIONS:
-1. Analyze the provided call transcript data carefully and thoroughly
-2. Answer the user's question based ONLY on the information present in the context above
-3. If the context contains relevant information:
-   - Provide specific, actionable insights backed by the data
-   - Quote or reference specific examples from the transcripts when applicable
-   - Use quantitative information (counts, percentages, trends) if available
-   - Identify patterns across multiple calls if relevant
-   
-4. Structure your response clearly:
-   - Start with a direct answer to the question
-   - Support with specific evidence from the transcripts
-   - Provide actionable recommendations when appropriate
-   
-5. If the context does NOT contain sufficient information to answer the question:
-   - Clearly state what information is missing
-   - Explain what you CAN determine from the available data
-   - Suggest what additional data would be needed
-   
-6. Maintain a professional, analytical tone while being conversational and helpful
+RESPONSE GUIDELINES:
+• Be direct and concise - no fluff or introductory phrases
+• Lead with numbers and data points immediately
+• Use bullet points for clarity
+• Maximum 4-5 sentences or bullet points
+• Quote specific calls when relevant (e.g., "Call 3: [quote]")
+• If data is insufficient, state it in one sentence
 
-7. When discussing metrics or trends:
-   - Be specific (e.g., "3 out of 5 calls" rather than "most calls")
-   - Highlight significant patterns or outliers
-   - Connect findings to business impact when possible
+Format:
+[Direct answer with key metric] + [2-3 supporting data points] + [Brief insight/recommendation if applicable]
 
-RESPONSE:
-EXAMPLE OF A GOOD RESPONSE:
-Question: "What are the main customer complaints?"
-Answer: "Based on the 5 calls provided, the primary complaints are:
-1. Billing issues (3/5 calls) - Customers reported unexpected charges
-2. Product defects (2/5 calls) - Specifically related to battery life
-For example, in Call #247, the customer stated: 'I was charged twice for the same order.'
-Recommendation: Prioritize billing system audit and implement duplicate charge detection."
+Example:
+Q: "What are main complaints?"
+A: "Billing issues dominate (3/5 calls, 60%). Call 2: 'Double charged for subscription.' Call 4: 'Unexpected renewal fee.' Recommend: Audit billing system for duplicate charges and improve renewal notifications."
 
-        """
+Your answer:"""
         
-        # 5. Call the LLM with the new, smaller prompt
+        # 5. Call the LLM with the refined prompt
         chat_response = openai_client.chat.completions.create(
             model="gpt-4-turbo-preview",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant analyzing call center data."},
+                {"role": "system", "content": "You are a data analyst. Provide short, metric-heavy answers with no fluff."},
                 {"role": "user", "content": final_prompt}
-            ]
+            ],
+            temperature=0.3,  # Lower temperature for more focused, consistent responses
+            max_tokens=300  # Limit response length to keep it concise
         )
         
         ai_answer = chat_response.choices[0].message.content
@@ -138,10 +113,7 @@ Recommendation: Prioritize billing system audit and implement duplicate charge d
 
     except Exception as e:
         print(f"Error in /chat endpoint: {e}")
-        # Return a user-facing error in the expected format
         return jsonify({"answer": "Sorry, an unexpected error occurred while processing your request."})
 
 if __name__ == '__main__':
-    # Use Gunicorn or another WSGI server in production
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
-
