@@ -43,6 +43,10 @@ def chat():
         if not user_query:
             return jsonify({"error": "No question provided"}), 400
 
+        # Check if user is asking for total count/stats
+        count_keywords = ['how many', 'total', 'count', 'number of calls', 'all calls']
+        is_count_query = any(keyword in user_query.lower() for keyword in count_keywords)
+        
         EMBEDDING_MODEL = "text-embedding-3-large"
         PINECONE_DIMENSION = 1024
         
@@ -54,18 +58,28 @@ def chat():
         )
         query_embedding = response.data[0].embedding
 
-        # 2. Query Pinecone to find the top 5 most relevant calls
+        # 2. Query Pinecone to find the most relevant calls
+        # Use more results for count queries, fewer for specific inquiries
+        top_k = 100 if is_count_query else 50
+        
         query_results = index.query(
             vector=query_embedding,
-            top_k=5,
+            top_k=top_k,
             include_metadata=True
         )
-
+        
+        # For count queries, also get total record count from Pinecone
+        if is_count_query:
+            # Get index stats to show total records
+            stats = index.describe_index_stats()
+            total_records = stats.get('total_vector_count', 'Unknown')
+            context = f"Total records in database: {total_records}\n\nSample of relevant calls:\n"
+        else:
+            context = "Call Records:\n"
         # 3. Build a concise context from the results
         if not query_results['matches']:
             return jsonify({"answer": "No relevant call records found for this query."})
-
-        context = "Call Records:\n"
+        
         for i, match in enumerate(query_results['matches'], 1):
             metadata = match['metadata']
             context += (
