@@ -60,7 +60,7 @@ def chat():
 
         # 2. Query Pinecone to find the most relevant calls
         # Use more results for count queries, fewer for specific inquiries
-        top_k = 100 if is_count_query else 50
+        top_k = 1000 if is_count_query else 50
         
         query_results = index.query(
             vector=query_embedding,
