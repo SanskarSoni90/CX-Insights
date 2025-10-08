@@ -1,7 +1,4 @@
-# .github/workflows/main.yml
-
 name: CX Insights - Process Calls and Update Index
-
 on:
   schedule:
     - cron: '*/15 * * * *'  # Run every 15 minutes
@@ -11,24 +8,20 @@ jobs:
   process-and-index:
     runs-on: ubuntu-latest
     
-    # Define all environment variables/secrets needed by the scripts at the job level
     env:
-      # Secrets for main.py (call processing)
+      # Call processing secrets
       EXOTEL_ACCOUNT_SID: ${{ secrets.EXOTEL_ACCOUNT_SID }}
       EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
       EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
       ASSEMBLYAI_API_KEY: ${{ secrets.ASSEMBLYAI_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }} # Used by main.py
-      GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }} # Used by main.py
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
       
-      # Secrets for index_data.py (Pinecone indexing)
-      # Note: These may be the same as above, adjust secret names if needed
+      # Indexing secrets
       GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-      OPENAI_API_KEY_CHAT: ${{ secrets.OPENAI_API_KEY_CHAT }}
-      GOOGLE_CREDENTIALS_JSON_CHAT: ${{ secrets.GOOGLE_CREDENTIALS_JSON_CHAT }}
       PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
       PINECONE_ENVIRONMENT: ${{ secrets.PINECONE_ENVIRONMENT }}
-
+      
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -50,22 +43,28 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install python-dotenv # Added to ensure the indexer script runs
+        pip install python-dotenv
         
     - name: 1. Run Call Processing Script
       run: |
-        echo "Starting call processing to update Google Sheet..."
+        echo "================================"
+        echo "Starting call processing..."
+        echo "================================"
         python main.py
-        echo "Call processing completed."
+        echo "✅ Call processing completed"
         
-    - name: 2. Run Pinecone Indexing Script
+    - name: 2. Run Enhanced Pinecone Indexing
       run: |
-        echo "Starting Pinecone indexing for new rows..."
+        echo "================================"
+        echo "Starting enhanced indexing with aggregates..."
+        echo "================================"
         python index_data.py
-        echo "Pinecone indexing completed."
+        echo "✅ Indexing completed"
         
-    - name: Report final status
+    - name: Report Status
       if: always()
       run: |
-        echo "Workflow completed with status: ${{ job.status }}"
-
+        echo "================================"
+        echo "Workflow Status: ${{ job.status }}"
+        echo "Timestamp: $(date)"
+        echo "================================"
