@@ -199,18 +199,34 @@ def build_context(query_results, intent):
             for i, match in enumerate(specific_matches, 1):
                 score = match.get('score', 0) if isinstance(match, dict) else match.score
                 m = match.get('metadata', {}) if isinstance(match, dict) else match.metadata
-                context += f"""Call #{i} (Relevance: {score:.2f})
-Date: {m.get('date', 'N/A')}
-Issue: {m.get('primary_issue', 'N/A')}
-Category: {m.get('issue_category', 'N/A')}
-Sentiment: {m.get('sentiment', 'N/A')}
-Urgency: {m.get('urgency', 'N/A')}
-Resolution: {m.get('resolution_status', 'N/A')}
-Summary: {m.get('summary', 'N/A')}
-Transcript Snippet: {m.get('transcript_snippet', 'N/A')}
-Action Items: {m.get('action_items', 'N/A')}
-
-"""
+                
+                # Build context with only available fields
+                context += f"Call #{i} (Relevance: {score:.2f})\n"
+                context += f"Date: {m.get('date', 'N/A')}\n"
+                
+                # Add optional fields only if they exist
+                if m.get('primary_issue'):
+                    context += f"Issue: {m.get('primary_issue')}\n"
+                if m.get('issue_category'):
+                    context += f"Category: {m.get('issue_category')}\n"
+                    
+                context += f"Sentiment: {m.get('sentiment', 'N/A')}\n"
+                
+                if m.get('urgency'):
+                    context += f"Urgency: {m.get('urgency')}\n"
+                if m.get('resolution_status'):
+                    context += f"Resolution: {m.get('resolution_status')}\n"
+                if m.get('customer_satisfaction'):
+                    context += f"Satisfaction: {m.get('customer_satisfaction')}/5\n"
+                    
+                context += f"Summary: {m.get('summary', 'N/A')}\n"
+                
+                if m.get('transcript_snippet'):
+                    context += f"Transcript Snippet: {m.get('transcript_snippet')}\n"
+                if m.get('action_items'):
+                    context += f"Action Items: {m.get('action_items')}\n"
+                
+                context += "\n"
         else:
             context += "No specific call data found.\n"
         
