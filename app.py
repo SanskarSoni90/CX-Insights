@@ -159,22 +159,32 @@ def query_with_strategy(query_embedding, intent):
 def build_context(query_results, intent):
     """Build optimized context based on intent."""
     
+    # Helper function to extract matches from Pinecone response
+    def get_matches(result):
+        if hasattr(result, 'matches'):
+            return result.matches
+        elif isinstance(result, dict) and 'matches' in result:
+            return result['matches']
+        return []
+    
     if intent == 'AGGREGATE':
         context = "=== PRE-COMPUTED STATISTICS ===\n"
         
         # Add aggregate summaries
-        if 'aggregates' in query_results and query_results['aggregates'].get('matches'):
-            for match in query_results['aggregates']['matches']:
-                metadata = match.get('metadata', {})
+        agg_matches = get_matches(query_results.get('aggregates', {}))
+        if agg_matches:
+            for match in agg_matches:
+                metadata = match.get('metadata', {}) if isinstance(match, dict) else match.metadata
                 context += f"\n{metadata.get('summary', '')}\n"
         else:
             context += "\nNo aggregate data available.\n"
         
         # Add compact sample examples
         context += "\n=== SAMPLE EXAMPLES ===\n"
-        if 'samples' in query_results and query_results['samples'].get('matches'):
-            for i, match in enumerate(query_results['samples']['matches'][:5], 1):
-                m = match.get('metadata', {})
+        sample_matches = get_matches(query_results.get('samples', {}))
+        if sample_matches:
+            for i, match in enumerate(sample_matches[:5], 1):
+                m = match.get('metadata', {}) if isinstance(match, dict) else match.metadata
                 context += f"{i}. [{m.get('date', 'N/A')}] {m.get('sentiment', 'N/A')} - {m.get('primary_issue', 'N/A')}\n"
         else:
             context += "No sample data available.\n"
@@ -184,10 +194,12 @@ def build_context(query_results, intent):
     elif intent == 'SPECIFIC':
         context = "=== DETAILED CALL INFORMATION ===\n\n"
         
-        if 'specific' in query_results and query_results['specific'].get('matches'):
-            for i, match in enumerate(query_results['specific']['matches'], 1):
-                m = match.get('metadata', {})
-                context += f"""Call #{i} (Relevance: {match.get('score', 0):.2f})
+        specific_matches = get_matches(query_results.get('specific', {}))
+        if specific_matches:
+            for i, match in enumerate(specific_matches, 1):
+                score = match.get('score', 0) if isinstance(match, dict) else match.score
+                m = match.get('metadata', {}) if isinstance(match, dict) else match.metadata
+                context += f"""Call #{i} (Relevance: {score:.2f})
 Date: {m.get('date', 'N/A')}
 Issue: {m.get('primary_issue', 'N/A')}
 Category: {m.get('issue_category', 'N/A')}
@@ -207,17 +219,19 @@ Action Items: {m.get('action_items', 'N/A')}
     elif intent == 'COMPARISON':
         context = "=== AGGREGATE DATA FOR COMPARISON ===\n"
         
-        if 'aggregates' in query_results and query_results['aggregates'].get('matches'):
-            for match in query_results['aggregates']['matches']:
-                metadata = match.get('metadata', {})
+        agg_matches = get_matches(query_results.get('aggregates', {}))
+        if agg_matches:
+            for match in agg_matches:
+                metadata = match.get('metadata', {}) if isinstance(match, dict) else match.metadata
                 context += f"\n{metadata.get('summary', '')}\n"
         else:
             context += "\nNo aggregate data available for comparison.\n"
         
         context += "\n=== SAMPLE DATA POINTS ===\n"
-        if 'samples' in query_results and query_results['samples'].get('matches'):
-            for i, match in enumerate(query_results['samples']['matches'][:15], 1):
-                m = match.get('metadata', {})
+        sample_matches = get_matches(query_results.get('samples', {}))
+        if sample_matches:
+            for i, match in enumerate(sample_matches[:15], 1):
+                m = match.get('metadata', {}) if isinstance(match, dict) else match.metadata
                 context += f"{i}. [{m.get('date', 'N/A')}] {m.get('issue_category', 'N/A')} | {m.get('sentiment', 'N/A')} | Satisfaction: {m.get('customer_satisfaction', 'N/A')}\n"
         else:
             context += "No sample data available for comparison.\n"
@@ -225,12 +239,12 @@ Action Items: {m.get('action_items', 'N/A')}
         return context
     
     else:  # SEARCH
-        matches = query_results.get('search', {}).get('matches', [])
-        context = f"=== SEARCH RESULTS ({len(matches)} calls found) ===\n\n"
+        search_matches = get_matches(query_results.get('search', {}))
+        context = f"=== SEARCH RESULTS ({len(search_matches)} calls found) ===\n\n"
         
-        if matches:
-            for i, match in enumerate(matches, 1):
-                m = match.get('metadata', {})
+        if search_matches:
+            for i, match in enumerate(search_matches, 1):
+                m = match.get('metadata', {}) if isinstance(match, dict) else match.metadata
                 summary = m.get('summary', 'N/A')
                 summary_preview = summary[:150] + "..." if len(summary) > 150 else summary
                 context += f"""{i}. {m.get('date', 'N/A')} | {m.get('sentiment', 'N/A')}
@@ -285,13 +299,22 @@ def chat():
         # Step 3: Query with appropriate strategy
         query_results = query_with_strategy(query_embedding, intent)
         
-        # FIXED: Better result checking
+        # FIXED: Better result checking - handle both dict and Pinecone response objects
         has_results = False
         total_matches = 0
         for key, value in query_results.items():
-            if isinstance(value, dict) and value.get('matches'):
+            matches = None
+            # Handle Pinecone response object
+            if hasattr(value, 'matches'):
+                matches = value.matches
+            # Handle dictionary
+            elif isinstance(value, dict) and 'matches' in value:
+                matches = value['matches']
+            
+            if matches and len(matches) > 0:
                 has_results = True
-                total_matches += len(value.get('matches', []))
+                total_matches += len(matches)
+                print(f"  {key}: {len(matches)} matches")
         
         print(f"Total matches found: {total_matches}")
         
