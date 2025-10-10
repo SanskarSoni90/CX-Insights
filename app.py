@@ -58,74 +58,102 @@ Respond with ONLY the category name (AGGREGATE, SPECIFIC, COMPARISON, or SEARCH)
             temperature=0,
             max_tokens=10
         )
-        return response.choices[0].message.content.strip().upper()
-    except:
+        intent = response.choices[0].message.content.strip().upper()
+        print(f"LLM classified intent as: {intent}")
+        return intent
+    except Exception as e:
+        print(f"ERROR in LLM classification: {e}")
         # Fallback to keyword matching
         query_lower = query.lower()
         if any(kw in query_lower for kw in ['how many', 'total', 'count', 'percentage', 'average', 'trend']):
-            return 'AGGREGATE'
+            intent = 'AGGREGATE'
         elif any(kw in query_lower for kw in ['specific', 'particular', 'transcript', 'tell me about']):
-            return 'SPECIFIC'
+            intent = 'SPECIFIC'
         elif any(kw in query_lower for kw in ['compare', 'vs', 'versus', 'difference between']):
-            return 'COMPARISON'
+            intent = 'COMPARISON'
         else:
-            return 'SEARCH'
+            intent = 'SEARCH'
+        print(f"Fallback classified intent as: {intent}")
+        return intent
 
 
 def query_with_strategy(query_embedding, intent):
     """Query Pinecone with strategy based on intent."""
     
-    if intent == 'AGGREGATE':
-        # Use aggregate namespace + sample of regular calls
-        agg_results = index.query(
-            vector=query_embedding,
-            top_k=5,
-            include_metadata=True,
-            namespace="aggregates"
-        )
+    try:
+        if intent == 'AGGREGATE':
+            # Use aggregate namespace + sample of regular calls
+            print("Querying aggregates namespace...")
+            agg_results = index.query(
+                vector=query_embedding,
+                top_k=5,
+                include_metadata=True,
+                namespace="aggregates"
+            )
+            print(f"Found {len(agg_results.get('matches', []))} aggregate matches")
+            
+            print("Querying default namespace for samples...")
+            sample_results = index.query(
+                vector=query_embedding,
+                top_k=10,
+                include_metadata=True,
+                namespace=""  # FIXED: Explicitly specify default namespace
+            )
+            print(f"Found {len(sample_results.get('matches', []))} sample matches")
+            
+            return {'aggregates': agg_results, 'samples': sample_results}
         
-        sample_results = index.query(
-            vector=query_embedding,
-            top_k=10,
-            include_metadata=True
-        )
+        elif intent == 'SPECIFIC':
+            # Detailed retrieval of few calls
+            print("Querying for specific calls...")
+            results = index.query(
+                vector=query_embedding,
+                top_k=5,
+                include_metadata=True,
+                namespace=""  # FIXED: Explicitly specify default namespace
+            )
+            print(f"Found {len(results.get('matches', []))} specific matches")
+            return {'specific': results}
         
-        return {'aggregates': agg_results, 'samples': sample_results}
+        elif intent == 'COMPARISON':
+            # Get aggregates + more samples for comparison
+            print("Querying aggregates for comparison...")
+            agg_results = index.query(
+                vector=query_embedding,
+                top_k=10,
+                include_metadata=True,
+                namespace="aggregates"
+            )
+            print(f"Found {len(agg_results.get('matches', []))} aggregate matches")
+            
+            print("Querying default namespace for comparison samples...")
+            sample_results = index.query(
+                vector=query_embedding,
+                top_k=30,
+                include_metadata=True,
+                namespace=""  # FIXED: Explicitly specify default namespace
+            )
+            print(f"Found {len(sample_results.get('matches', []))} sample matches")
+            
+            return {'aggregates': agg_results, 'samples': sample_results}
+        
+        else:  # SEARCH
+            # Standard search with moderate results
+            print("Querying for search results...")
+            results = index.query(
+                vector=query_embedding,
+                top_k=20,
+                include_metadata=True,
+                namespace=""  # FIXED: Explicitly specify default namespace
+            )
+            print(f"Found {len(results.get('matches', []))} search matches")
+            return {'search': results}
     
-    elif intent == 'SPECIFIC':
-        # Detailed retrieval of few calls
-        results = index.query(
-            vector=query_embedding,
-            top_k=5,
-            include_metadata=True
-        )
-        return {'specific': results}
-    
-    elif intent == 'COMPARISON':
-        # Get aggregates + more samples for comparison
-        agg_results = index.query(
-            vector=query_embedding,
-            top_k=10,
-            include_metadata=True,
-            namespace="aggregates"
-        )
-        
-        sample_results = index.query(
-            vector=query_embedding,
-            top_k=30,
-            include_metadata=True
-        )
-        
-        return {'aggregates': agg_results, 'samples': sample_results}
-    
-    else:  # SEARCH
-        # Standard search with moderate results
-        results = index.query(
-            vector=query_embedding,
-            top_k=20,
-            include_metadata=True
-        )
-        return {'search': results}
+    except Exception as e:
+        print(f"ERROR in query_with_strategy: {e}")
+        import traceback
+        traceback.print_exc()
+        return {}
 
 
 def build_context(query_results, intent):
@@ -135,24 +163,28 @@ def build_context(query_results, intent):
         context = "=== PRE-COMPUTED STATISTICS ===\n"
         
         # Add aggregate summaries
-        if 'aggregates' in query_results and query_results['aggregates']['matches']:
+        if 'aggregates' in query_results and query_results['aggregates'].get('matches'):
             for match in query_results['aggregates']['matches']:
                 metadata = match.get('metadata', {})
                 context += f"\n{metadata.get('summary', '')}\n"
+        else:
+            context += "\nNo aggregate data available.\n"
         
         # Add compact sample examples
         context += "\n=== SAMPLE EXAMPLES ===\n"
-        if 'samples' in query_results and query_results['samples']['matches']:
+        if 'samples' in query_results and query_results['samples'].get('matches'):
             for i, match in enumerate(query_results['samples']['matches'][:5], 1):
                 m = match.get('metadata', {})
                 context += f"{i}. [{m.get('date', 'N/A')}] {m.get('sentiment', 'N/A')} - {m.get('primary_issue', 'N/A')}\n"
+        else:
+            context += "No sample data available.\n"
         
         return context
     
     elif intent == 'SPECIFIC':
         context = "=== DETAILED CALL INFORMATION ===\n\n"
         
-        if 'specific' in query_results:
+        if 'specific' in query_results and query_results['specific'].get('matches'):
             for i, match in enumerate(query_results['specific']['matches'], 1):
                 m = match.get('metadata', {})
                 context += f"""Call #{i} (Relevance: {match.get('score', 0):.2f})
@@ -167,35 +199,48 @@ Transcript Snippet: {m.get('transcript_snippet', 'N/A')}
 Action Items: {m.get('action_items', 'N/A')}
 
 """
+        else:
+            context += "No specific call data found.\n"
+        
         return context
     
     elif intent == 'COMPARISON':
         context = "=== AGGREGATE DATA FOR COMPARISON ===\n"
         
-        if 'aggregates' in query_results and query_results['aggregates']['matches']:
+        if 'aggregates' in query_results and query_results['aggregates'].get('matches'):
             for match in query_results['aggregates']['matches']:
                 metadata = match.get('metadata', {})
                 context += f"\n{metadata.get('summary', '')}\n"
+        else:
+            context += "\nNo aggregate data available for comparison.\n"
         
         context += "\n=== SAMPLE DATA POINTS ===\n"
-        if 'samples' in query_results and query_results['samples']['matches']:
+        if 'samples' in query_results and query_results['samples'].get('matches'):
             for i, match in enumerate(query_results['samples']['matches'][:15], 1):
                 m = match.get('metadata', {})
                 context += f"{i}. [{m.get('date', 'N/A')}] {m.get('issue_category', 'N/A')} | {m.get('sentiment', 'N/A')} | Satisfaction: {m.get('customer_satisfaction', 'N/A')}\n"
+        else:
+            context += "No sample data available for comparison.\n"
         
         return context
     
     else:  # SEARCH
-        context = f"=== SEARCH RESULTS ({len(query_results.get('search', {}).get('matches', []))} calls found) ===\n\n"
+        matches = query_results.get('search', {}).get('matches', [])
+        context = f"=== SEARCH RESULTS ({len(matches)} calls found) ===\n\n"
         
-        if 'search' in query_results:
-            for i, match in enumerate(query_results['search']['matches'], 1):
+        if matches:
+            for i, match in enumerate(matches, 1):
                 m = match.get('metadata', {})
+                summary = m.get('summary', 'N/A')
+                summary_preview = summary[:150] + "..." if len(summary) > 150 else summary
                 context += f"""{i}. {m.get('date', 'N/A')} | {m.get('sentiment', 'N/A')}
    Issue: {m.get('primary_issue', 'N/A')}
-   Summary: {m.get('summary', 'N/A')[:150]}...
+   Summary: {summary_preview}
    
 """
+        else:
+            context += "No matching calls found.\n"
+        
         return context
 
 
@@ -228,25 +273,30 @@ def chat():
         EMBEDDING_MODEL = "text-embedding-3-large"
         PINECONE_DIMENSION = 1024
         
+        print("Creating embedding...")
         response = openai_client.embeddings.create(
             input=[user_query], 
             model=EMBEDDING_MODEL,
             dimensions=PINECONE_DIMENSION
         )
         query_embedding = response.data[0].embedding
+        print("Embedding created successfully")
         
         # Step 3: Query with appropriate strategy
         query_results = query_with_strategy(query_embedding, intent)
         
-        # Check if any results found
+        # FIXED: Better result checking
         has_results = False
+        total_matches = 0
         for key, value in query_results.items():
             if isinstance(value, dict) and value.get('matches'):
                 has_results = True
-                break
+                total_matches += len(value.get('matches', []))
+        
+        print(f"Total matches found: {total_matches}")
         
         if not has_results:
-            return jsonify({"answer": "No relevant call records found for this query."})
+            return jsonify({"answer": "No relevant call records found for this query. This could mean:\n• No calls match your search criteria\n• The data hasn't been indexed yet\n• Try rephrasing your question"})
         
         # Step 4: Build optimized context
         context = build_context(query_results, intent)
@@ -275,6 +325,7 @@ Instructions:
 Answer:"""
         
         # Step 6: Get LLM response
+        print("Generating AI response...")
         chat_response = openai_client.chat.completions.create(
             model="gpt-4-turbo-preview",
             messages=[
@@ -292,10 +343,10 @@ Answer:"""
         return jsonify({"answer": ai_answer})
 
     except Exception as e:
-        print(f"Error in /chat endpoint: {e}")
+        print(f"ERROR in /chat endpoint: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({"answer": "Sorry, an unexpected error occurred while processing your request."})
+        return jsonify({"answer": f"Sorry, an unexpected error occurred: {str(e)}\n\nPlease check the server logs for more details."})
 
 
 if __name__ == '__main__':
